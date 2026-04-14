@@ -9635,42 +9635,55 @@ DNS-over-HTTPS with IP:
             CURLOPT_URL            => $this->api . $method,
             CURLOPT_CUSTOMREQUEST  => 'POST',
             CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT        => 20,
             CURLOPT_HTTPHEADER => $json_header ? [
                 'Content-Type: application/json'
             ] : [],
             CURLOPT_POSTFIELDS     => $data,
         ]);
         $res = curl_exec($ch);
-        $r   = json_decode($res, true);
-        if (!empty($res['description']) || is_null($res)) {
+        $curlError = curl_error($ch);
+        $statusCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        $r = json_decode($res, true);
+        if ($curlError || $statusCode >= 400 || (is_array($r) && !($r['ok'] ?? false)) || $res === false || $res === null) {
             file_put_contents('/logs/requests_error', var_export([
                 'r' => [
                     'method' => $method,
                     'data'   => $data,
                 ],
-                'a' => $res,
+                'status' => $statusCode,
+                'curl'   => $curlError,
+                'a'      => $res,
             ], true) . "\n", FILE_APPEND);
+            return [
+                'ok' => false,
+                'error_code' => $statusCode,
+                'description' => $curlError ?: ($r['description'] ?? 'request failed'),
+            ];
         }
-        return $r;
+        return $r ?: ['ok' => false, 'description' => 'invalid json response'];
     }
 
     public function setwebhook()
     {
         $ip = $this->ip;
         if (empty($ip)) {
-            die('нет айпи');
+            file_put_contents('/logs/init_error', "setwebhook skipped: empty IP\n", FILE_APPEND);
+            return false;
         }
-        echo "$ip\n";
-        var_dump($r = $this->request('setWebhook', [
+        $r = $this->request('setWebhook', [
             'url'             => "https://$ip/tlgrm?k={$this->key}",
             'certificate'     => curl_file_create('/certs/self_public'),
             'allowed_updates' => json_encode(['*']),
-        ]));
+        ]);
         if (!empty($r['result']) && $r['result'] == true) {
             file_put_contents('/start', 1);
-        } else {
-            die("set webhook fail\n");
+            return true;
         }
+        file_put_contents('/logs/init_error', "setwebhook failed: " . var_export($r, true) . "\n", FILE_APPEND);
+        return false;
     }
 
     public function setcommands()
@@ -9687,7 +9700,12 @@ DNS-over-HTTPS with IP:
                 ],
             ]
         ];
-        var_dump($this->request('setMyCommands', json_encode($data), 1));
+        $r = $this->request('setMyCommands', json_encode($data), 1);
+        if (empty($r['ok'])) {
+            file_put_contents('/logs/init_error', "setcommands failed: " . var_export($r, true) . "\n", FILE_APPEND);
+            return false;
+        }
+        return true;
     }
 
     public function send($chat, $text, ?int $to = 0, $button = false, $reply = false, $mode = 'HTML', $disable_notification = false)
