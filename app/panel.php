@@ -6,6 +6,7 @@ require __DIR__ . '/calc.php';
 require __DIR__ . '/i18n.php';
 require __DIR__ . '/bot.php';
 require __DIR__ . '/panel_lib.php';
+require __DIR__ . '/panel_backend.php';
 
 if ($c['debug']) {
     require __DIR__ . '/debug.php';
@@ -14,19 +15,17 @@ if ($c['debug']) {
 panelRequireAuth();
 
 $bot = new Bot($c['key'], $i);
+$backend = new PanelBackend($bot);
+$snapshot = $backend->serviceSnapshot();
 $conf = $bot->getPacConf();
 $compose = yaml_parse_file('/docker/compose')['services'] ?? [];
 $hash = $bot->getHashBot();
-$domain = $conf['domain'] ?: $bot->ip;
+$domain = $snapshot['domain'];
 $sslType = $bot->nginxGetTypeCert();
 $scheme = $sslType ? 'https' : 'http';
-$transport = $conf['transport'] ?: 'Websocket';
-$hyPort = !empty($compose['hy']['ports'][0]) ? explode(':', $compose['hy']['ports'][0])[0] : '';
+$transport = $snapshot['transport'];
+$hyPort = $snapshot['hyPort'];
 $adguardConfig = yaml_parse_file('/config/AdGuardHome.yaml');
-$wgTitle = !empty($conf['amnezia']) ? 'Amnezia' : 'WireGuard';
-$wg1Title = !empty($conf['wg1_amnezia']) ? 'Amnezia' : 'WireGuard';
-$ocSub = $bot->getHashSubdomain('oc');
-$npSub = $bot->getHashSubdomain('np');
 
 function panel_service_state(Bot $bot, array $conf, array $compose, string $service): array
 {
@@ -106,6 +105,8 @@ $serviceCards = array_map(fn($key) => ['key' => $key] + panel_service_state($bot
 $xrayStats = $bot->getXrayStats();
 $down = $bot->getBytes(($xrayStats['global']['download'] ?? 0) + ($xrayStats['session']['download'] ?? 0));
 $up = $bot->getBytes(($xrayStats['global']['upload'] ?? 0) + ($xrayStats['session']['upload'] ?? 0));
+$ocSub = $snapshot['openconnect']['subdomain'];
+$npSub = $snapshot['naive']['subdomain'];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -116,7 +117,7 @@ $up = $bot->getBytes(($xrayStats['global']['upload'] ?? 0) + ($xrayStats['sessio
     <style>
         :root { color-scheme: dark; }
         body { font-family: Arial, sans-serif; background:#111827; color:#e5e7eb; margin:0; }
-        .wrap { max-width:1200px; margin:0 auto; padding:24px; }
+        .wrap { max-width:1280px; margin:0 auto; padding:24px; }
         .top { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
         .title { font-size:28px; font-weight:700; }
         .muted { color:#9ca3af; }
@@ -126,16 +127,18 @@ $up = $bot->getBytes(($xrayStats['global']['upload'] ?? 0) + ($xrayStats['sessio
         .on { background:#14532d; color:#bbf7d0; }
         .off { background:#7f1d1d; color:#fecaca; }
         .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
-        button, select, input { background:#111827; color:#e5e7eb; border:1px solid #4b5563; border-radius:10px; padding:10px 12px; }
+        button, select, input, textarea { background:#111827; color:#e5e7eb; border:1px solid #4b5563; border-radius:10px; padding:10px 12px; }
         button { cursor:pointer; }
         button.primary { background:#2563eb; border-color:#2563eb; }
         .section { margin-top:28px; }
         .section h2 { margin:0 0 12px; }
-        .config { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
+        .config { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; }
         .kv { line-height:1.8; }
         .toolbar { display:flex; gap:12px; flex-wrap:wrap; }
         .notice { margin-top:14px; padding:12px 14px; border-radius:10px; background:#1e3a8a; color:#dbeafe; display:none; }
         a { color:#93c5fd; }
+        form.inline-form { display:grid; gap:10px; }
+        label span { display:block; margin-bottom:6px; color:#cbd5e1; }
     </style>
 </head>
 <body>
@@ -143,11 +146,11 @@ $up = $bot->getBytes(($xrayStats['global']['upload'] ?? 0) + ($xrayStats['sessio
     <div class="top">
         <div>
             <div class="title">vpnbot_panel</div>
-            <div class="muted">Web panel for built-in services management</div>
+            <div class="muted">Primary web control panel, Telegram stays as backup channel</div>
         </div>
         <div class="toolbar">
             <a href="/panel/logout.php"><button>Logout</button></a>
-            <button class="primary" data-action="restart_all">Apply pending restart</button>
+            <button class="primary" data-action="restart_all">Restart stack</button>
         </div>
     </div>
 
@@ -162,7 +165,7 @@ $up = $bot->getBytes(($xrayStats['global']['upload'] ?? 0) + ($xrayStats['sessio
         <div class="card kv">
             <h2>Quick links</h2>
             <div>AdGuard: <a href="<?= htmlspecialchars("$scheme://$domain/adguard$hash") ?>" target="_blank"><?= htmlspecialchars("$scheme://$domain/adguard$hash") ?></a></div>
-            <div>NaiveProxy: <b><?= htmlspecialchars("https://{$conf['naive']['user']}:{$conf['naive']['pass']}@$npSub.$domain") ?></b></div>
+            <div>NaiveProxy: <b><?= htmlspecialchars("https://{$snapshot['naive']['user']}:{$snapshot['naive']['pass']}@$npSub.$domain") ?></b></div>
             <div>OpenConnect: <b><?= htmlspecialchars($ocSub ? "https://$ocSub.$domain/" : 'not configured') ?></b></div>
             <div>Hysteria port: <b><?= htmlspecialchars($hyPort ?: 'not configured') ?></b></div>
         </div>
@@ -188,7 +191,7 @@ $up = $bot->getBytes(($xrayStats['global']['upload'] ?? 0) + ($xrayStats['sessio
 
     <div class="section config">
         <div class="card">
-            <h2>VLESS</h2>
+            <h2>VLESS / Xray</h2>
             <div class="row">
                 <select id="transportSelect">
                     <?php foreach (['Reality', 'Websocket', 'xhttp'] as $item): ?>
@@ -198,28 +201,66 @@ $up = $bot->getBytes(($xrayStats['global']['upload'] ?? 0) + ($xrayStats['sessio
                 <button class="primary" data-action="set_transport">Save transport</button>
             </div>
         </div>
+
         <div class="card">
-            <h2>Ports and network</h2>
+            <h2>Network ports</h2>
             <div class="row">
-                <label>Hysteria port <input id="hyPort" type="number" min="1" max="65535" value="<?= htmlspecialchars($hyPort ?: '') ?>"></label>
+                <label><span>Hysteria port</span><input id="hyPort" type="number" min="1" max="65535" value="<?= htmlspecialchars($hyPort ?: '') ?>"></label>
                 <button data-action="set_hy_port">Save port</button>
             </div>
             <div class="row">
-                <button data-action="toggle_port" data-port-service="wg">Toggle WG port</button>
-                <button data-action="toggle_port" data-port-service="wg1">Toggle WG2 port</button>
-                <button data-action="toggle_port" data-port-service="tg">Toggle MTProto port</button>
+                <button data-action="toggle_port" data-port-service="wg">Toggle WG</button>
+                <button data-action="toggle_port" data-port-service="wg1">Toggle WG2</button>
+                <button data-action="toggle_port" data-port-service="tg">Toggle MTProto</button>
                 <button data-action="toggle_port" data-port-service="ad">Toggle AdGuard DoT</button>
                 <button data-action="toggle_port" data-port-service="ss">Toggle Shadowsocks</button>
                 <button data-action="toggle_port" data-port-service="dnstt">Toggle DNSTT</button>
             </div>
         </div>
-        <div class="card kv">
-            <h2>Credentials</h2>
-            <div>Naive user: <b><?= htmlspecialchars($conf['naive']['user'] ?? '') ?></b></div>
-            <div>Naive pass: <b><?= htmlspecialchars($conf['naive']['pass'] ?? '') ?></b></div>
-            <div>OpenConnect pass: <b><?= htmlspecialchars($conf['ocserv'] ?? '') ?></b></div>
-            <div>AdGuard pass: <b><?= htmlspecialchars($conf['adpswd'] ?? '') ?></b></div>
-            <div>Hysteria pass: <b><?= htmlspecialchars($conf['hysteria_pass'] ?? '') ?></b></div>
+
+        <div class="card">
+            <h2>Domain</h2>
+            <form class="inline-form" onsubmit="return saveForm(event, 'save_domain', {domain: this.domain.value})">
+                <label><span>Main domain</span><input name="domain" value="<?= htmlspecialchars($domain) ?>"></label>
+                <button class="primary" type="submit">Save domain</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>NaiveProxy</h2>
+            <form class="inline-form" onsubmit="return saveForm(event, 'save_naive', {user: this.user.value, pass: this.pass.value, subdomain: this.subdomain.value})">
+                <label><span>Login</span><input name="user" value="<?= htmlspecialchars($snapshot['naive']['user']) ?>"></label>
+                <label><span>Password</span><input name="pass" value="<?= htmlspecialchars($snapshot['naive']['pass']) ?>"></label>
+                <label><span>Subdomain</span><input name="subdomain" value="<?= htmlspecialchars($snapshot['naive']['subdomain']) ?>"></label>
+                <button class="primary" type="submit">Save NaiveProxy</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>OpenConnect</h2>
+            <form class="inline-form" onsubmit="return saveForm(event, 'save_openconnect', {pass: this.pass.value, dns: this.dns.value, subdomain: this.subdomain.value})">
+                <label><span>Password</span><input name="pass" value="<?= htmlspecialchars($snapshot['openconnect']['pass']) ?>"></label>
+                <label><span>DNS</span><input name="dns" value="<?= htmlspecialchars($snapshot['openconnect']['dns']) ?>"></label>
+                <label><span>Subdomain</span><input name="subdomain" value="<?= htmlspecialchars($snapshot['openconnect']['subdomain']) ?>"></label>
+                <button class="primary" type="submit">Save OpenConnect</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Hysteria</h2>
+            <form class="inline-form" onsubmit="return saveForm(event, 'save_hysteria', {pass: this.pass.value})">
+                <label><span>Password</span><input name="pass" value="<?= htmlspecialchars($snapshot['hysteria']['pass']) ?>"></label>
+                <button class="primary" type="submit">Save Hysteria</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>AdGuardHome</h2>
+            <form class="inline-form" onsubmit="return saveForm(event, 'save_adguard', {pass: this.pass.value, clientId: this.clientId.value})">
+                <label><span>Password</span><input name="pass" value="<?= htmlspecialchars($snapshot['adguard']['pass']) ?>"></label>
+                <label><span>Client ID</span><input name="clientId" value="<?= htmlspecialchars($snapshot['adguard']['clientId']) ?>"></label>
+                <button class="primary" type="submit">Save AdGuard</button>
+            </form>
         </div>
     </div>
 
@@ -233,15 +274,23 @@ async function api(action, payload = {}) {
         body: JSON.stringify({ action, ...payload })
     });
     const data = await response.json();
-    if (!response.ok || !data.ok) {
-        throw new Error(data.error || 'Request failed');
-    }
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
     return data;
 }
 function showNotice(text) {
     const n = document.getElementById('notice');
     n.textContent = text;
     n.style.display = 'block';
+}
+async function saveForm(event, action, payload) {
+    event.preventDefault();
+    try {
+        await api(action, payload);
+        showNotice('Saved successfully');
+    } catch (error) {
+        showNotice(error.message);
+    }
+    return false;
 }
 document.querySelectorAll('[data-action]').forEach((button) => {
     button.addEventListener('click', async () => {
@@ -262,7 +311,7 @@ document.querySelectorAll('[data-action]').forEach((button) => {
             }
             if (action === 'toggle_port') {
                 await api(action, { service: button.dataset.portService });
-                showNotice('Port visibility toggled. Restart if needed.');
+                showNotice('Port visibility toggled');
                 return;
             }
             if (action === 'restart_service') {
@@ -272,7 +321,7 @@ document.querySelectorAll('[data-action]').forEach((button) => {
             }
             if (action === 'restart_all') {
                 await api(action);
-                showNotice('Restart requested');
+                showNotice('Stack restart requested');
                 return;
             }
         } catch (error) {

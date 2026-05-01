@@ -12,5 +12,6 @@ if ($c['debug']) {
 $bot = new Bot($c['key'], $i);
 $bot->cleanQueue();
 $bot->syncPortClients();
+file_put_contents('/start', 1);
 $bot->setwebhook();
 $bot->setcommands();

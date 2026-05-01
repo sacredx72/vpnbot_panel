@@ -6,10 +6,12 @@ require __DIR__ . '/calc.php';
 require __DIR__ . '/i18n.php';
 require __DIR__ . '/bot.php';
 require __DIR__ . '/panel_lib.php';
+require __DIR__ . '/panel_backend.php';
 
 panelRequireAuth();
 
 $bot = new Bot($c['key'], $i);
+$backend = new PanelBackend($bot);
 $raw = json_decode(file_get_contents('php://input'), true) ?: [];
 $action = $raw['action'] ?? '';
 
@@ -25,53 +27,57 @@ function panel_error(string $message, int $code = 400): void
 
 switch ($action) {
     case 'set_transport':
-        $transport = $raw['transport'] ?? '';
-        if (!in_array($transport, ['Reality', 'Websocket', 'xhttp'], true)) {
-            panel_error('Unsupported transport');
-        }
-        $bot->changeTransport($transport);
+        $backend->setTransport((string) ($raw['transport'] ?? ''));
         panel_ok();
         break;
 
     case 'set_hy_port':
-        $port = (int) ($raw['port'] ?? 0);
-        $bot->setPort($port, 'hy');
+        $backend->setHyPort((int) ($raw['port'] ?? 0));
         panel_ok();
         break;
 
     case 'toggle_port':
-        $service = $raw['service'] ?? '';
-        if (!in_array($service, ['wg', 'wg1', 'tg', 'ad', 'ss', 'dnstt'], true)) {
-            panel_error('Unsupported port target');
-        }
-        $bot->hidePort($service);
+        $backend->togglePort((string) ($raw['service'] ?? ''));
         panel_ok();
         break;
 
     case 'restart_service':
-        $service = $raw['service'] ?? '';
-        $map = [
-            'wireguard' => fn() => $bot->ssh('pkill -f wg-quick; /bin/sh /start_wg.sh', 'wg', false, '/logs/wg_restart'),
-            'wireguard_secondary' => fn() => $bot->ssh('pkill -f wg-quick; /bin/sh /start_wg.sh', 'wg1', false, '/logs/wg1_restart'),
-            'xray' => fn() => $bot->restartXray($bot->getXray()),
-            'naive' => fn() => $bot->ssh('pkill caddy; /bin/sh /start_np.sh', 'np', false, '/logs/naive_restart'),
-            'openconnect' => fn() => $bot->ssh('pkill ocserv; /bin/sh /start_oc.sh', 'oc', false, '/logs/oc_restart'),
-            'hysteria' => fn() => $bot->restartHysteria(),
-            'mtproto' => fn() => $bot->restartTG(),
-            'adguard' => fn() => [$bot->stopAd(), $bot->startAd()],
-            'dnstt' => fn() => $bot->dnsttStart(),
-            'shadowsocks' => fn() => $bot->ssh('pkill ssserver; /bin/sh /start_ss.sh', 'ss', false, '/logs/ss_restart'),
-        ];
-        if (empty($map[$service])) {
-            panel_error('Unsupported service');
-        }
-        $map[$service]();
+        $backend->restartService((string) ($raw['service'] ?? ''));
+        panel_ok();
+        break;
+
+    case 'save_domain':
+        $backend->saveDomain((string) ($raw['domain'] ?? ''));
+        panel_ok();
+        break;
+
+    case 'save_naive':
+        $backend->saveNaive((string) ($raw['user'] ?? ''), (string) ($raw['pass'] ?? ''), (string) ($raw['subdomain'] ?? ''));
+        panel_ok();
+        break;
+
+    case 'save_openconnect':
+        $backend->saveOpenConnect((string) ($raw['pass'] ?? ''), (string) ($raw['dns'] ?? ''), (string) ($raw['subdomain'] ?? ''));
+        panel_ok();
+        break;
+
+    case 'save_hysteria':
+        $backend->saveHysteria((string) ($raw['pass'] ?? ''));
+        panel_ok();
+        break;
+
+    case 'save_adguard':
+        $backend->saveAdguard((string) ($raw['pass'] ?? ''), (string) ($raw['clientId'] ?? ''));
         panel_ok();
         break;
 
     case 'restart_all':
-        $bot->restart();
+        $backend->requestRestart();
         panel_ok();
+        break;
+
+    case 'snapshot':
+        panel_ok(['data' => $backend->serviceSnapshot()]);
         break;
 
     default:
